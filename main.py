@@ -20,6 +20,10 @@ from utils import *
 from dyrep import DyRep
 from freq import FreqBaseline
 
+# Inside my model training code
+import wandb
+wandb.init(project="LDG-project")
+
 def load_checkpoint(file):
     # TODO: Loading the checkpoint stopped working, need to fix.
     print('loading the model')
@@ -37,7 +41,8 @@ def load_checkpoint(file):
 
 def save_checkpoint(batch_idx, epoch):
     try:
-        fname = '%s/checkpoints/checkpoint_dygraphs_%s_epoch%d_batch%d.pth.tar' % (args.results, experiment_ID, epoch, batch_idx)
+        fname = f'{args.results}/checkpoints/checkpoint_dygraphs_{experiment_ID}_epoch{epoch}_batch{batch_idx}.pth.tar'
+        wandb.save(f'checkpoints/checkpoint_dygraphs_{experiment_ID}_epoch{epoch}_batch{batch_idx}.pth.tar')
         print('saving the model to %s' % fname)
         state = {
             'epoch': epoch,
@@ -198,28 +203,48 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='DyGraphs Training Parameters')
     parser.add_argument('--data_dir', type=str, default='./')
     parser.add_argument('--dataset', type=str, default='social', choices=['social', 'github', 'example'])
-    parser.add_argument('--prob', default=0.8, help='filter events by this probability value in the Social Evolution data')
-    parser.add_argument('--batch_size', type=int, default=200, help='batch size (sequence length)')
-    parser.add_argument('--n_hid', type=int, default=32, help='hidden layer size')
-    parser.add_argument('--epochs', type=int, default=5, help='number of epochs')
-    parser.add_argument('--seed', type=int, default=1111, help='random seed')
-    parser.add_argument('--lr', type=float, default=0.0002, help='Learning Rate')
+    parser.add_argument('--prob', default=0.8,
+                        help='filter events by this probability value in the Social Evolution data')
+    parser.add_argument('--batch_size', type=int, default=200,
+                        help='batch size (sequence length)')
+    parser.add_argument('--n_hid', type=int, default=32,
+                        help='hidden layer size')
+    parser.add_argument('--epochs', type=int, default=5,
+                        help='number of epochs')
+    parser.add_argument('--seed', type=int, default=1111,
+                        help='random seed')
+    parser.add_argument('--lr', type=float, default=0.0002,
+                        help='Learning Rate')
     parser.add_argument('--lr_decay_step', type=str, default='10',
                         help='number of epochs after which to reduce learning rate')
-    parser.add_argument('--weight', type=float, default=1, help='weight for the second term in the loss')
-    parser.add_argument('--wdecay', type=float, default=0, help='weight decay')
-    parser.add_argument('--bilinear', action='store_true', default=False, help='use bilinear model')
+    parser.add_argument('--weight', type=float, default=1,
+                        help='weight for the second term in the loss')
+    parser.add_argument('--wdecay', type=float, default=0,
+                        help='weight decay')
+    parser.add_argument('--bilinear', action='store_true', default=False,
+                        help='use bilinear model')
     parser.add_argument('--encoder', type=str, default=None, choices=['linear', 'mlp', 'mlp1', 'rand'])
     parser.add_argument('--sparse', action='store_true', default=False,
                         help='sparsity prior as in some tasks in Kipf et al., ICML 2018')
-    parser.add_argument('--n_rel', type=int, default=2, help='number of edges for learned graphs')
-    parser.add_argument('--device', type=str, default='cuda')
-    parser.add_argument('--association', type=str, default='CloseFriend', help='The long term graph of the Social Evolution data used as long term edges')
+    parser.add_argument('--n_rel', type=int, default=2,
+                        help='number of edges for learned graphs')
+    parser.add_argument('--device', type=str, default='cpu')
+    parser.add_argument('--association', type=str, default='CloseFriend',
+                        help='The long term graph of the Social Evolution data used as long term edges')
     parser.add_argument('--resume', type=str, default='')
-    parser.add_argument('--log_interval', type=int, default=20, help='print interval')
-    parser.add_argument('--results', type=str, default='results', help='results file path')
+    parser.add_argument('--log_interval', type=int, default=20,
+                        help='print interval')
+    parser.add_argument('--results', type=str, default='results',
+                        help='results file path')
     parser.add_argument('--soft_attn', action='store_true', default=False)
-    parser.add_argument('--freq', action='store_true', default=False, help='use the Frequency bias')
+    parser.add_argument('--freq', action='store_true', default=False,
+                        help='use the Frequency bias')
+
+    dyrep_social = "--log_interval 300 --epochs 5 --data_dir ./SocialEvolution/"
+    # dyrep_github = "--log_interval 300 --epochs 5 --dataset github --data_dir ./Github"
+    # ldg_social = "--log_interval 300  --data_dir ./SocialEvolution/ --encoder mlp --soft_attn --bilinear --sparse"
+    # ldg_github = "--log_interval 300  --dataset github --data_dir ./Github --encoder mlp --soft_attn --bilinear --sparse"
+    args = parser.parse_args(dyrep_social.split())
 
     args = parser.parse_args()
 
@@ -248,6 +273,7 @@ if __name__ == '__main__':
     torch.cuda.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
 
+    # TODO: 1. 데이터를 불러온다.
     if args.dataset == 'social':
         data = SocialEvolutionDataset.load_data(args.data_dir, args.prob)
         train_set = SocialEvolutionDataset(data['initial_embeddings'], data['train'], args.association)
@@ -255,34 +281,46 @@ if __name__ == '__main__':
                                     data_train=data['train'])
         initial_embeddings = data['initial_embeddings'].copy()
         A_initial = train_set.get_Adjacency()[0]
+
     elif args.dataset == 'github':
         train_set = GithubDataset('train', data_dir=args.data_dir)
         test_set = GithubDataset('test', data_dir=args.data_dir)
         initial_embeddings = np.random.randn(train_set.N_nodes, args.n_hid)
         A_initial = train_set.get_Adjacency()[0]
+
     elif args.dataset == 'example':
         train_set = ExampleDataset('train')
         test_set = ExampleDataset('test')
         initial_embeddings = np.random.randn(train_set.N_nodes, args.n_hid)
         A_initial = train_set.get_Adjacency()[0]
+
     else:
         raise NotImplementedError(args.dataset)
 
     def initalize_state(dataset, keepS=False):
-        '''Initializes node embeddings and the graph to the original state after every epoch'''
+        '''
+        Initializes node embeddings and the graph to the original state after every epoch
+        Adjacency로부터 Node별 Degree를 계산하고, time_bar도 초기화 한다.
+        :param dataset: Train 데이터셋
+        :param keepS: True(LDG논문)이면 S를 데이터로부터 예측하게 되고, False(DyREP논문)이면 A로부터 계산한다.
+        :return:
+            time_bar: 모든 노드별 바로 이전 이벤트 시간 (초기화값으로 FIRST_TIME이 된다.)
+            node_degree_global: 노드별 Degree값을 저장
+        '''
 
         Adj_all = dataset.get_Adjacency()[0]
 
         if not isinstance(Adj_all, list):
             Adj_all = [Adj_all]
 
+        #각 관계타입 및 노드 별로 Degree값을 계산한다.
         node_degree_global = []
         for rel, A in enumerate(Adj_all):
             node_degree_global.append(np.zeros(A.shape[0]))
             for u in range(A.shape[0]):
                 node_degree_global[rel][u] = np.sum(A[u])
 
-        Adj_all = Adj_all[0]
+        Adj_all = Adj_all[0]    #첫번째 Relation만 쓰겠다는 의미.
         print('Adj_all', Adj_all.shape, len(node_degree_global), node_degree_global[0].min(), node_degree_global[0].max())
         time_bar = np.zeros((dataset.N_nodes, 1)) + dataset.FIRST_DATE.timestamp()
 
@@ -296,8 +334,10 @@ if __name__ == '__main__':
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=False)
     test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False)
 
-    freq = FreqBaseline(train_set, test_set)
+    if args.freq:
+        freq = FreqBaseline(train_set, test_set)
 
+    # TODO: 2. Model을 정의한다. (이때 __init__이 수행할때, GNN의 Hidden Embedding(Z)와 A로부터 S를 계산해 초기화한다) ,
     model = DyRep(node_embeddings=initial_embeddings,
                   N_nodes=train_set.N_nodes,
                   A_initial=A_initial,
@@ -308,13 +348,15 @@ if __name__ == '__main__':
                   n_rel=args.n_rel,
                   rnd=rnd,
                   soft_attn=args.soft_attn,
-                  freq=freq.H_train_norm if args.freq else None,
+                  freq=freq.H_train_norm if args.freq else None,    #Frequency Baseline을 Bias로 활용할 것인지!?
                   node_degree_global=None).to(args.device)
 
     print(model)
+    #만약 모델 파라미터가 Gradient 계산이 필요하면, 그의 사이즈를 모두 곱(np.prod)하여 리스트에 저장함. 모두 계산되면 합한다 (np.sum)
     print('number of training parameters: %d' %
           np.sum([np.prod(p.size()) if p.requires_grad else 0 for p in model.parameters()]))
 
+    # TODO: 3. Optimizer를 설정한다.
     params_main, params_enc = [], []
     for name, param in model.named_parameters():
         if name.find('encoder') >= 0 and param.requires_grad:
@@ -322,12 +364,14 @@ if __name__ == '__main__':
         elif param.requires_grad:
             params_main.append(param)
 
-
+    #각 parameter별로 서로 다른 weight_decay를 주기 위함
     optimizer = optim.Adam([{"params": params_main, "weight_decay": args.wdecay},
-                            {"params": params_enc, "weight_decay": 1e-4}], lr=args.lr, betas=(0.5, 0.999))
+                            {"params": params_enc, "weight_decay": 1e-4}],
+                           lr=args.lr,
+                           betas=(0.5, 0.999))
     scheduler = lr_scheduler.MultiStepLR(optimizer, args.lr_decay_step, gamma=0.5)
 
-    if args.resume != '':
+    if args.resume != '':   #재시작인 경우, 저장했던 것부터 다시 시작
         epoch_start, batch_start, time_bar, node_degree_global, experiment_ID = load_checkpoint(args.resume)
         resume = True
         model.node_degree_global = node_degree_global
@@ -337,13 +381,16 @@ if __name__ == '__main__':
         resume = False
 
 
+    # TODO: 4. Loss를 저장할 변수를 정의한다.
     losses_events, losses_nonevents, losses_KL, losses_sum = [], [], [], []
     test_MAR, test_HITS10, test_loss = [], [], []
+
+    # TODO: 5. 학습: Epoch만큼 학습을 한다.
     for epoch in range(epoch_start, args.epochs + 1):
 
-        scheduler.step()
-
-        if not (resume and epoch == epoch_start):
+        # scheduler.step()
+        # TODO: 5.1. 재시작이 아니거나, 처음이 아니면, 초기화 해준다. (재시작이거나, 처음인 경우 model=DyREP()하면서 초기화 되어 있으므로)
+        if (not resume) or (epoch != epoch_start):        # if not (resume and epoch == epoch_start):
             # Reinitialize node embeddings and adjacency matrices, but keep the model parameters intact
             time_bar, node_degree_global = initalize_state(train_loader.dataset, keepS=epoch > 1)
             model.node_degree_global = node_degree_global
@@ -353,16 +400,18 @@ if __name__ == '__main__':
 
         start = time.time()
 
+        # TODO: 5.2. 학습데이터의 배치를 하나씩 가져와서 예측/Loss계산/Optimizer 돌린다.
         for batch_idx, data_batch in enumerate(train_loader):
 
-            if resume and batch_idx <= batch_start:
+            if resume and batch_idx <= batch_start: ##kingmbc: 재시작이고, batch_idx가 이미 예전에 학습한 배치이면, pass
                 continue
             model.train()
 
             optimizer.zero_grad()
-            data_batch[2] = data_batch[2].float().to(args.device)
-            data_batch[4] = data_batch[4].double().to(args.device)
-            data_batch[5] = data_batch[5].double()  # no need of GPU
+            #data_batch[0]과 data_batch[1]은 해당 이벤트의 두 노드(u, v)를 의미
+            data_batch[2] = data_batch[2].float().to(args.device)       #kingmbc: time_delta_uv (u,v 각 노드의 자신의 이전 이벤트와의 시간차) [2x4]
+            data_batch[4] = data_batch[4].double().to(args.device)      #kingmbc: time_bar      (모든 노드에 대한 이전 시간)
+            data_batch[5] = data_batch[5].double()  # no need of GPU    #kingmbc: time_cur      (현재 시간)
             output = model(data_batch)
             losses = [-torch.sum(torch.log(output[0]) + 1e-10), args.weight * torch.sum(output[1])]  #
 
@@ -373,6 +422,7 @@ if __name__ == '__main__':
 
             loss = torch.sum(torch.stack(losses)) / args.batch_size
             loss.backward()
+            wandb.log({'epoch': epoch, 'loss': loss})
             nn.utils.clip_grad_value_(model.parameters(), 100)
 
             optimizer.step()
@@ -384,6 +434,9 @@ if __name__ == '__main__':
             assert np.allclose(train_loader.dataset.time_bar, time_bar)
             assert np.allclose(test_loader.dataset.time_bar, time_bar)
 
+
+            #https://pytorch.org/docs/stable/torch.html#torch.clamp
+            #model.psi.data를 min=1e-1(0.1)과 max=1e+3(1000)사이로 묶는다.
             model.psi.data = torch.clamp(model.psi.data, 1e-1, 1e+3)  # to prevent overflow in computing Lambda
 
             time_iter = time.time() - start
@@ -394,12 +447,9 @@ if __name__ == '__main__':
             if (batch_idx + 1) % args.log_interval == 0 or batch_idx == len(train_loader) - 1:
                 # Report (intermediate) results
 
-                print('\nTRAIN epoch={}/{}, batch={}/{}, sec/iter: {:.4f}, loss={:.3f}, loss components: {}'.format(epoch,
-                                                                                            args.epochs,
-                                                                                            batch_idx + 1,
-                                                                                            len(train_loader),
-                                                                                            time_iter / (batch_idx + 1),
-                                                                                            loss.item(), [l.item() for l in losses]))
+                print(f'\nTRAIN epoch={epoch}/{args.epochs}, batch={batch_idx + 1}/{len(train_loader)},'
+                      f' sec/iter: {time_iter / (batch_idx + 1):.4f},'
+                      f' loss={loss.item():.3f}, loss components: {[l.item() for l in losses]}')
 
                 if args.encoder is not None:
                     S = model.S.data.cpu().numpy()
@@ -447,6 +497,7 @@ if __name__ == '__main__':
                 # restore node embeddings and other data
                 time_bar = set_temporal_variables(variables, model, train_loader, test_loader)
 
+        scheduler.step()
 
     print('end time:', datetime.datetime.now())
 

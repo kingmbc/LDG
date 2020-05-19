@@ -60,7 +60,8 @@ class LinearEncoder(nn.Module):
 class MLP(nn.Module):
     """Two-layer fully-connected ELU net with batch norm."""
 
-    def __init__(self, n_in, n_hid, n_out, do_prob=0., bilinear=False, bnorm=True):
+    def __init__(self, n_in, n_hid, n_out,
+                 do_prob=0., bilinear=False, bnorm=True):
         super(MLP, self).__init__()
         self.bilinear = bilinear
         self.bnorm = bnorm
@@ -104,7 +105,9 @@ class MLP(nn.Module):
 
 
 class MLPEncoder(nn.Module):
-    def __init__(self, n_in, n_hid, n_out, do_prob=0., factor=True, bilinear=False, n_stages=2, bnorm=True, sym=True):
+    def __init__(self, n_in, n_hid, n_out,
+                 do_prob=0., factor=True, bilinear=False,
+                 n_stages=2, bnorm=True, sym=True):
         super(MLPEncoder, self).__init__()
 
         self.factor = factor

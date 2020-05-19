@@ -23,7 +23,25 @@ class DyRep(nn.Module):
                  sym=False,
                  soft_attn=False,
                  freq=False,
-                 device='cuda'):
+                 device='cpu'):
+        """
+        DyREP 모델 정의
+        :param node_embeddings: 노드들의 Initial Embedding값
+        :param N_nodes: 노드 수
+        :param A_initial: 처음 시작시간의 Adjacency Matrix
+        :param N_surv_samples:
+        :param n_hidden: GNN 에서 Hidden Embedding dimension
+        :param bilinear: [LDG논문] NRI 방법론 적용
+        :param sparse: [LDG논문] Prior를 어떤 것을 쓸지인데, Uniform과 Sparse가 있음.
+        :param n_rel: Association으로 사용할 Relation 수(기본=1)
+        :param encoder: LDG논문 방법론 적용 여부
+        :param node_degree_global: 노드별 Degree
+        :param rnd:
+        :param sym:
+        :param soft_attn: LDG논문 방법론 적용 여부
+        :param freq:
+        :param device: GPU 사용 여부
+        """
         super(DyRep, self).__init__()
 
         self.opt = True
@@ -113,29 +131,53 @@ class DyRep(nn.Module):
                 # print('after Xavier', m.weight.data.shape, m.weight.data.min(), m.weight.data.max())
 
     def generate_S_from_A(self):
+        """
+        A(Adj)에서 Degree가 있는 노드들에 대한 Degree를 계산하고, 그 노드의 상대방 노드들에 대해 Degree로 나눠준다.
+        그러면, 예를 들어, u노드의 이웃들 v, j, k들은 평균 degree값(S)을 가지게 된다.
+        참고로, 각 노드별 Degree는 다르기 때문에 S는 Symmetric하지 않다!
+        :return:
+        """
         S = self.A.new(self.N_nodes, self.N_nodes, self.n_assoc_types).fill_(0)
         for rel in range(self.n_assoc_types):
-            D = torch.sum(self.A[:, :, rel], dim=1).float()
-            for v in torch.nonzero(D):
-                u = torch.nonzero(self.A[v, :, rel].squeeze())
-                S[v, u, rel] = 1. / D[v]
+            D = torch.sum(self.A[:, :, rel], dim=1).float()     #각 노드별 Degree를 가지고 있음
+            for v in torch.nonzero(D):                          #D 텐서에서 Nonzero인, 즉 Degree를 가진 놈들 인덱스
+                u = torch.nonzero(self.A[v, :, rel].squeeze())  #v중에서 nonzero인 u 노드(즉,v와 연결이 있는 노드)
+                S[v, u, rel] = 1. / D[v]                        #v의 Degree를 가져와서, u들에 대해 degree로 나눠준다.
         self.S = S
+
         # Check that values in each row of S add up to 1
+        # Degree로 평균을 냈기 때문에, 각 노드별로 합치면 1이 되어야 한다.
+        # check that S_uv is zero when A_uv is zero
+        # 또한, A에서의 해당 노드의 Degree가 0이면, S에서도 0이어야 한다!
         for rel in range(self.n_assoc_types):
             S = self.S[:, :, rel]
-            assert torch.sum(S[self.A[:, :, rel] == 0]) < 1e-5, torch.sum(S[self.A[:, :, rel] == 0])  # check that S_uv is zero when A_uv is zero
+            assert torch.sum(S[self.A[:, :, rel] == 0]) < 1e-5, torch.sum(S[self.A[:, :, rel] == 0])
 
 
     def initialize(self, node_embeddings, A_initial, keepS=False):
+        """
+        노드별 임베딩의 Dimension을 n_hidden만큼 맞춰주고, GNN에서 기본적인 노드 임베딩 Z를 만든다.
+        그리고, 만약 A_initial이 없다면, A를 샘플링한다.
+        keepS가 False(==DyREP논문)이면 A로부터 S도 계산한다. True이면, S를 계산하지 않음
+        :param node_embeddings:
+        :param A_initial:
+        :param keepS:
+        :return:
+        """
         print('initialize model''s node embeddings and adjacency matrices for %d nodes' % self.N_nodes)
-        # Initial embeddings
+        # GNN 내부에서 쓸 노드 임베딩 Z를 만든다(차원을 맞춰서)
         if node_embeddings is not None:
+            #패딩을 넣는데, np.pad( (0,0), (0,17) ) 이 된다.
+            # 즉, 행렬에서 0차원(row)으로는 위아래로 아무것도 안채우게 되고,1차원(col)으로는 좌로는 0, 우로는 17만큼 채우겠다는 의미임
+            # 따라서 아래 코드는 원래 행렬의 차원을 (i,j) -> (i, j+17)이 되게 한다.
+            # 이는 n_hidden만큼 채워주기 위함. 최종적으로 GNN에서 쓰는 노드 임베딩은 z가 된다!
             z = np.pad(node_embeddings, ((0, 0), (0, self.n_hidden - node_embeddings.shape[1])), 'constant')
             z = torch.from_numpy(z).float().to(self.device)
 
+        # A_initial이 없거나, 추론된 latent_graph가 있다면 그로부터 A를 생성한다.
         if A_initial is None or self.latent_graph:
-
             print('initial random prediction of A')
+            #Sparse=True인 경우, n_assoc_types에서 int(True)이므로, 1을 추가함
             A = torch.zeros(self.N_nodes, self.N_nodes, self.n_assoc_types + int(self.sparse), device=self.device)
 
             for i in range(self.N_nodes):
@@ -151,19 +193,29 @@ class DyRep(nn.Module):
                             pvals = [0.9, 0.025, 0.025, 0.025, 0.025]
                         else:
                             raise NotImplementedError(self.n_assoc_types)
+                        #위에서 정의한 pvals(Association의 사전 확률 분포-Multinomial Dist.)에서 샘플링함
+                        # 예를 들어 주사위같은 경우 각 면마다 동일한 확률(1/6)을 가지는 경우에
+                        # np.random.multinomial(20, [1 / 6.] * 6, size=1)이면,
+                        # array([[4, 1, 7, 5, 2, 1]]) 의 결과를 얻을 수 있고,
+                        # 이는 숫자1은 4번 나왔고, 2는 1번, 3은 7번 나왔다는 의미가 됨.
+                        # https://docs.scipy.org/doc/numpy-1.14.0/reference/generated/numpy.random.multinomial.html
+                        # 따라서, 아래의 코드는 1번 수행해서 얻은 결과에서, [0][0]을 하면 실제로 뽑힌 녀석의 인덱스를 가져옴
+                        # 위에서 보면, 0번 인덱스가 가장 확률이 높기 때문에 가장 많이 뽑힐듯!?
                         ind = np.nonzero(np.random.multinomial(1, pvals))[0][0]
-                    else:
+                    else:   #Uniform Distribution을 가정하고 있어서, 그냥 Random으로 뽑음
                         ind = np.random.randint(0, self.n_assoc_types, size=1)
                     A[i, j, ind] = 1
                     A[j, i, ind] = 1
+
+            # None값 체크
             assert torch.sum(torch.isnan(A)) == 0, (torch.sum(torch.isnan(A)), A)
-            if self.sparse:
+            if self.sparse: #마지막 index에 1부터 시작하여, dominant확률을 제외한 나머지 샘플링 결과만 저장함
                 A = A[:, :, 1:]
 
         else:
             print('A_initial', A_initial.shape)
             A = torch.from_numpy(A_initial).float().to(self.device)
-            if len(A.shape) == 2:
+            if len(A.shape) == 2:   #만약 A.shape 이 2개면(2차원 행렬)이면, unsqueeze로 차원 2에 하나 추가하여 3차원으로 늘린다.
                 A = A.unsqueeze(2)
 
         # make these variables part of the model
@@ -444,6 +496,11 @@ class DyRep(nn.Module):
         return edges, logits, reg
 
     def forward(self, data):
+        """
+
+        :param data:
+        :return:
+        """
         u, v, time_delta_uv, event_types, time_bar, time_cur = data[:6]
 
         B = len(u)

@@ -17,13 +17,22 @@ class SocialEvolutionDataset(EventsDataset):
     '''
 
     FIRST_DATE = datetime.datetime(2008, 9, 11)  # consider events starting from this time
-    EVENT_TYPES =  ['SMS', 'Proximity', 'Calls']
+    EVENT_TYPES = ['SMS', 'Proximity', 'Calls']
 
     def __init__(self,
                  subj_features,
-                 data,
-                 MainAssociation,
-                 data_train=None):
+                 data: dict,
+                 MainAssociation: str,
+                 data_train=None):  #현재 데이터가 test_data인경우 data_train에는 None이 아니고, data_train값이 들어감
+        """
+
+        :param subj_features: Node의 최초 임베딩값 (이 데이터의 경우에는 사용자 Profile (Subject.csv)에서 가져온다)
+        :param data: 아래 static method인 load_data()로 부터 읽어들인 데이터 (Train_data일수도 있고, Test_data일수도 있다.)
+                    특히, data안에는 'initial_embeddings', 'train', 'test'가 Key로 들어가있고,
+                    'train'/'test' 각각 안에는 Adj(시간별/관계별), EVENT_TYPES, relations가 들어가 있음
+        :param MainAssociation: Association으로 간주할 Relation 명 (예, 'CloseFriend')
+        :param data_train: None이 아니라면, 현재 주어진 데이터는 Test_data라는 것이고, 이 data_train을 이용해 마지막 이벤트의 날짜 및 Adj.를 가져온다.
+        """
         super(SocialEvolutionDataset, self).__init__()
 
         self.subj_features = subj_features
@@ -32,15 +41,21 @@ class SocialEvolutionDataset(EventsDataset):
         self.event_types_num = {}
         self.time_bar = None
         self.MainAssociation = MainAssociation
-        self.TEST_TIMESLOTS = [datetime.datetime(2009, 5, 10), datetime.datetime(2009, 5, 20), datetime.datetime(2009, 5, 31),
-                               datetime.datetime(2009, 6, 10), datetime.datetime(2009, 6, 20), datetime.datetime(2009, 6, 30)]
+        self.TEST_TIMESLOTS = [datetime.datetime(2009, 5, 10),
+                               datetime.datetime(2009, 5, 20),
+                               datetime.datetime(2009, 5, 31),
+                               datetime.datetime(2009, 6, 10),
+                               datetime.datetime(2009, 6, 20),
+                               datetime.datetime(2009, 6, 30)]
         self.FIRST_DATE = SocialEvolutionDataset.FIRST_DATE
         self.event_types = SocialEvolutionDataset.EVENT_TYPES
 
+        """ FIRST_DATE 이후의 이벤트만 가지도록 필터링 한 후, event_types_num에 Dictionary로 저"""
         k = 1  # k >= 1 for communication events
         for t in self.event_types:
             print(t, k, len(data.EVENT_TYPES[t].tuples))
 
+            #FIRST_DATE보다 큰 이벤트만 저장한다.
             events = list(filter(lambda x: x[3].toordinal() >= self.FIRST_DATE.toordinal(),
                                  data.EVENT_TYPES[t].tuples))
             self.all_events.extend(events)
@@ -48,25 +63,27 @@ class SocialEvolutionDataset(EventsDataset):
             k += 1
 
         n = len(self.all_events)
+        print(set([e[2] for e in self.all_events]))
+        assert MainAssociation not in (set([e[2] for e in self.all_events])) #이때에는 Association Event가 없다.
         self.N_nodes = subj_features.shape[0]
 
         if data.split == 'train':
             Adj_all, keys, Adj_all_last = self.get_Adjacency()
 
-            print('initial and final associations', self.MainAssociation, Adj_all.sum(), Adj_all_last.sum(),
+            print('initial and final associations', self.MainAssociation,
+                  Adj_all.sum(), Adj_all_last.sum(),
                   np.allclose(Adj_all, Adj_all_last))
 
 
         # Initial topology
         if len(list(data.Adj.keys())) > 0:
-
+            #list(data.Adj.keys())[0] == 첫번째 설문 날짜, 이를 data.Adj에서 가져와서, 그것의 Key들을 가져오면, 그때 응답된 Relation들을 가져옴
             keys = sorted(list(data.Adj[list(data.Adj.keys())[0]].keys()))  # relation keys
             keys.remove(MainAssociation)
             keys = [MainAssociation] + keys  # to make sure CloseFriend goes first
 
             k = 0  # k <= 0 for association events
             for rel in keys:
-
                 if rel != MainAssociation:
                     continue
                 if data_train is None:
@@ -75,11 +92,14 @@ class SocialEvolutionDataset(EventsDataset):
                 else:
                     date = sorted(list(data_train.Adj.keys()))[-1]  # last date of the training set
                     Adj_prev = data_train.Adj[date][rel]
-                self.event_types_num[rel] = k
+                self.event_types_num[rel] = k   #Association Relation을 이때 처음 저장
 
                 N = Adj_prev.shape[0]
 
                 # Associative events
+                #TODO: RelationshipFromSurveys.csv에서 저장한 시간별 친구 관계 정보 (data.Adj)를 바탕으로,
+                # 시간이 흘러가면서 언제 친구를 맺었는지 이벤트 정보를 기록함
+                # 한계점: 설문데이터이다 보니, 친구 맺은 이벤트 시간이 정확하지는 않음
                 for date_id, date in enumerate(sorted(list(data.Adj.keys()))):  # start from the second survey
                     if date.toordinal() >= self.FIRST_DATE.toordinal():
                         # for rel_id, rel in enumerate(sorted(list(dygraphs.Adj[date].keys()))):
@@ -95,11 +115,14 @@ class SocialEvolutionDataset(EventsDataset):
 
                 k -= 1
 
+                #원래 처음 communicative event만 있었던 n에서, associative event가 추가된 all_events갯수를 뺌
                 print(data.split, rel, len(self.all_events) - n)
                 n = len(self.all_events)
 
         self.all_events = sorted(self.all_events, key=lambda x: int(x[3].timestamp()))
 
+        print(set([e[2] for e in self.all_events]))
+        assert MainAssociation in (set([e[2] for e in self.all_events])) #이때에는 Association Event가 있다.
         print('%d events' % len(self.all_events))
         print('last 10 events:')
         for event in self.all_events[-10:]:
@@ -108,17 +131,24 @@ class SocialEvolutionDataset(EventsDataset):
         self.n_events = len(self.all_events)
 
         H_train = np.zeros((N, N))
-        c = 0
+        evt_count = 0
         for e in self.all_events:
             H_train[e[0], e[1]] += 1
             H_train[e[1], e[0]] += 1
-            c += 1
-        print('H_train', c, H_train.max(), H_train.min(), H_train.std())
-        self.H_train = H_train
+            evt_count += 1
+        print(f'H_train {evt_count}, {H_train.max()}, {H_train.min()}, {H_train.std()}')
+        self.H_train = H_train  #각 사용자 간의 상호작용 횟수를 모두 더함 (이벤트 종류 상관없이!!)
 
 
     @staticmethod
     def load_data(data_dir, prob, dump=True):
+        """
+        데이터를 이미 저장된 pkl에서 불러오거나, 없다면 새로이 만드는 함수.
+        :param data_dir: 위치 경로
+        :param prob: 데이터에서 이벤트의 생성 Confidence 임계값 (센서 이벤트가 많기 때문에 신뢰성 높은 이벤트를 고려하기 위함)
+        :param dump: 파일을 저장할지 여부
+        :return: data(
+        """
         data_file = pjoin(data_dir, 'data_prob%s.pkl' % prob)
         if os.path.isfile(data_file):
             print('loading data from %s' % data_file)
@@ -137,22 +167,29 @@ class SocialEvolutionDataset(EventsDataset):
         return data
 
     def get_Adjacency(self, multirelations=False):
+        """
+        :param multirelations: Association을 고려할때 여러개의 relation 으로 할 것인지?
+        :return:
+            Adj_all_init: 첫 날짜의 Adjacency
+            keys: Relations들
+            Adj_all_last: 마지막 날짜의 Adjacency
+        """
         dates = sorted(list(self.data.Adj.keys()))
-        Adj_all = self.data.Adj[dates[0]]
-        Adj_all_last = self.data.Adj[dates[-1]]
-        # Adj_friends = Adj_all[self.MainAssociation].copy()
+        Adj_all_init = self.data.Adj[dates[0]]           # 첫 날짜의 Adjacency
+        Adj_all_last = self.data.Adj[dates[-1]]     # 마지막 설문 날짜의 Adjacency
+        # Adj_friends = Adj_all_init[self.MainAssociation].copy()
         if multirelations:
-            keys = sorted(list(Adj_all.keys()))
+            keys = sorted(list(Adj_all_init.keys()))
             keys.remove(self.MainAssociation)
             keys = [self.MainAssociation] + keys  # to make sure CloseFriend goes first
-            Adj_all = np.stack([Adj_all[rel].copy() for rel in keys], axis=2)
+            Adj_all_init = np.stack([Adj_all_init[rel].copy() for rel in keys], axis=2)
             Adj_all_last = np.stack([Adj_all_last[rel].copy() for rel in keys], axis=2)
         else:
             keys = [self.MainAssociation]
-            Adj_all = Adj_all[self.MainAssociation].copy()
+            Adj_all_init = Adj_all_init[self.MainAssociation].copy()
             Adj_all_last = Adj_all_last[self.MainAssociation].copy()
 
-        return Adj_all, keys, Adj_all_last
+        return Adj_all_init, keys, Adj_all_last
 
 
     def time_to_onehot(self, d):
@@ -295,6 +332,7 @@ class CSVReader:
 class SubjectsReader:
     '''
     Class to read Subjects.csv in this dataset
+    이 CSV파일에서 'user'를 포함하는 컬럼에 대해 one-hot encoding해서 가져오게
     '''
 
     def __init__(self,
@@ -303,20 +341,22 @@ class SubjectsReader:
         print(os.path.basename(csv_path))
 
         csv = pandas.read_csv(csv_path)
+
+        #subjects = csv['user_id'].tolist() 와 동일함
         subjects = csv[list(filter(lambda column: column.find('user') >= 0, list(csv.keys())))[0]].tolist()
         print('Number of subjects', len(subjects))
         features = []
         for column in list(csv.keys()):
-            if column.find('user') >= 0:
+            if column.find('user') >= 0:    #'user'를 포함하는 컬럼만 하겠다는 의미
                 continue
-            values = list(map(str, csv[column].tolist()))
+            values = list(map(str, csv[column].tolist()))   #user_id의 숫자를 문자로 변경
             features_unique = np.unique(values)
-            features_onehot = np.zeros((len(subjects), len(features_unique)))
+            features_onehot = np.zeros((len(subjects), len(features_unique)))   #
             for subj, feat in enumerate(values):
                 ind = np.where(features_unique == feat)[0]
                 assert len(ind) == 1, (ind, features_unique, feat, type(feat))
                 features_onehot[subj, ind[0]] = 1
-            features.append(features_onehot)
+            features.append(features_onehot)       #결국, 여기에는 'user'가 포함된 컬럼을 one_hot_eocoding시키고, features에 인코딩된 컬럼하나씩 쌓는다.
 
         features_onehot = np.concatenate(features, axis=1)
         print('features', features_onehot.shape)
@@ -326,21 +366,54 @@ class SubjectsReader:
 class SocialEvolution():
     '''
     Class to read all csv in this dataset
+    모든 CSV파일을 파싱하여 데이터로 저장한다.
+    RelationshipsFromSurveys.csv = Adjacency를 계산하기 위해 사용되고,
+    나머지 csv파일들은 이벤트 스트림을 저장히기 위해 사용됨
     '''
 
     def __init__(self,
-                 data_dir,
-                 split,
-                 MIN_EVENT_PROB):
+                 data_dir:str,
+                 split:str,
+                 MIN_EVENT_PROB:int):
         self.data_dir = data_dir
         self.split = split
         self.MIN_EVENT_PROB = MIN_EVENT_PROB
 
         self.relations = CSVReader(pjoin(data_dir, 'RelationshipsFromSurveys.csv'), split=split, MIN_EVENT_PROB=MIN_EVENT_PROB)
-        self.relations.subject_ids = np.unique(self.relations.data['id.A'] + self.relations.data['id.B'])
+        self.relations.subject_ids = np.unique(self.relations.data['id.A'] + self.relations.data['id.B'])   #서로간의 관계 데이터에서 Unique 사용자들
         self.N_subjects = len(self.relations.subject_ids)
         print('Number of subjects', self.N_subjects)
 
+        self.__get_communicative_events(data_dir, split, MIN_EVENT_PROB)
+        self.__get_adjacency_matrix()
+
+
+    def __get_adjacency_matrix(self):
+        # Compute adjacency matrices for associative relationship data
+        self.Adj = {}
+        dates = self.relations.data['survey.date']  #각 설문응답별 설문날짜들
+        rels = self.relations.data['relationship']  #각 설문응답에서의 관계응답들(e.g., BlogLivejournalTwitter,FacebookAllTaggedPhotos)
+        for date_id, date in enumerate(self.relations.data['survey.date_unique']):
+            self.Adj[date] = {}
+            ind = np.where(np.array([d == date for d in dates]))[0] #위 unique날짜에 해당하는 응답들
+            for rel_id, rel in enumerate(self.relations.data['relationship_unique']):
+                ind_rel = np.where(np.array([r == rel for r in [rels[i] for i in ind]]))[0] #응답들 중에서 특정 관계(rel)에 대응되는 응답들
+                A = np.zeros((self.N_subjects, self.N_subjects))
+                for j in ind_rel:   #각 관계응답(예를 들어, BlogLivejournalTwitter) 인덱스 번호를 가져와서,
+                    row = ind[j]    #결국 이 row는 특정 날짜/특정 관계에 찾아진 응답 인덱스임. 그래서 아래에 그때 연관된 두사람 간의 연결을 맺어줌
+                    A[self.relations.data['id.A'][row] - 1, self.relations.data['id.B'][row] - 1] = 1
+                    A[self.relations.data['id.B'][row] - 1, self.relations.data['id.A'][row] - 1] = 1
+                self.Adj[date][rel] = A     #특정 날짜(date)와 특정 관계(rel)에 대한 Adjacency(A)를 저장
+                # sanity check
+                for row in range(len(dates)):
+                    if rels[row] == rel and dates[row] == date:
+                        #즉, 아래는 Adj[date][rel][u1, u2] == 1 이어야 함(위에서 그렇게 저장했으므로!)
+                        assert self.Adj[dates[row]][rels[row]][
+                                   self.relations.data['id.A'][row] - 1, self.relations.data['id.B'][row] - 1] == 1
+                        assert self.Adj[dates[row]][rels[row]][
+                                   self.relations.data['id.B'][row] - 1, self.relations.data['id.A'][row] - 1] == 1
+
+    def __get_communicative_events(self, data_dir, split, MIN_EVENT_PROB):
         # Read communicative events
         self.EVENT_TYPES = {}
         for t in SocialEvolutionDataset.EVENT_TYPES:
@@ -349,26 +422,3 @@ class SocialEvolution():
                                            MIN_EVENT_PROB=MIN_EVENT_PROB,
                                            event_type=t,
                                            N_subjects=self.N_subjects)
-
-        # Compute adjacency matrices for associative relationship data
-        self.Adj = {}
-        dates = self.relations.data['survey.date']
-        rels = self.relations.data['relationship']
-        for date_id, date in enumerate(self.relations.data['survey.date_unique']):
-            self.Adj[date] = {}
-            ind = np.where(np.array([d == date for d in dates]))[0]
-            for rel_id, rel in enumerate(self.relations.data['relationship_unique']):
-                ind_rel = np.where(np.array([r == rel for r in [rels[i] for i in ind]]))[0]
-                A = np.zeros((self.N_subjects, self.N_subjects))
-                for j in ind_rel:
-                    row = ind[j]
-                    A[self.relations.data['id.A'][row] - 1, self.relations.data['id.B'][row] - 1] = 1
-                    A[self.relations.data['id.B'][row] - 1, self.relations.data['id.A'][row] - 1] = 1
-                self.Adj[date][rel] = A
-                # sanity check
-                for row in range(len(dates)):
-                    if rels[row] == rel and dates[row] == date:
-                        assert self.Adj[dates[row]][rels[row]][
-                                   self.relations.data['id.A'][row] - 1, self.relations.data['id.B'][row] - 1] == 1
-                        assert self.Adj[dates[row]][rels[row]][
-                                   self.relations.data['id.B'][row] - 1, self.relations.data['id.A'][row] - 1] == 1

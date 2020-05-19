@@ -3,7 +3,7 @@ import numpy as np
 
 
 class FreqBaseline():
-
+    ROUND = 3
     def __init__(self, train, test):
         N = train.N_nodes
 
@@ -37,18 +37,23 @@ class FreqBaseline():
         for b in range(len(test.all_events)):
             u_it, v_it, k, dt = test.all_events[b]
             assert u_it != v_it, ('loops are not permitted', u_it, v_it, k[b])
-            idx1 = list(np.argsort(H_train[u_it])[::-1])
+            idx1 = list(np.argsort(H_train[u_it])[::-1])    #u와 많이 communication했던 노드들 순으로
             idx1.remove(u_it)
-            idx2 = list(np.argsort(H_train[v_it])[::-1])
+            idx2 = list(np.argsort(H_train[v_it])[::-1])    #v와 많이 commuinication했던 노드들 순으로
             idx2.remove(v_it)
             rank, hits = self.get_mar_hits_sym(idx1, idx2, v_it, u_it)
             ranks.append(rank)
             hits_10.append(hits)
-        print('\nFrequency MAR and HITS@10:', np.mean(ranks), np.std(ranks), np.mean(hits_10), np.std(hits_10))
+        print(f'\n[1][Frequency-All] MAR and HITS@10: '
+              f'{np.mean(ranks):.3f}+-{np.std(ranks):.3f},'
+              f' {np.mean(hits_10):.3f}+-{np.std(hits_10):.3f}')
 
         self.results = {}
 
         self.results['freq'] = (np.mean(ranks), np.mean(hits_10))
+
+
+
 
         A_all, keys, _ = train.get_Adjacency(multirelations=True)
 
@@ -64,11 +69,11 @@ class FreqBaseline():
                 u_it, v_it, k, dt = test.all_events[b]
                 assert u_it != v_it, ('loops are not permitted', u_it, v_it, k[b])
 
-                idx1 = list(np.where(A[u_it] == 1)[0])
+                idx1 = list(np.where(A[u_it] == 1)[0])  #u와 연결되어 있는 노드들
                 if u_it in idx1:
                     idx1.remove(u_it)
 
-                idx2 = list(np.where(A[v_it] == 1)[0])
+                idx2 = list(np.where(A[v_it] == 1)[0])  #v와 연결되어 있는 노드들
                 if v_it in idx2:
                     idx2.remove(v_it)
 
@@ -86,9 +91,12 @@ class FreqBaseline():
                 rank, hits = self.get_mar_hits_sym(idx1, idx2, v_it, u_it)
                 ranks.append(rank)
                 hits_10.append(hits)
-            print('%s: Frequency MAR and HITS@10:' % rel, np.mean(ranks), np.std(ranks), np.mean(hits_10), np.std(hits_10))
+            print(f'[2.{rel_ind}][Frequency-{rel}] MAR and HITS@10: '
+                  f'{np.mean(ranks):.3f}+-{np.std(ranks):.3f},'
+                  f' {np.mean(hits_10):.3f}+-{np.std(hits_10):.3f}')
 
             self.results[rel] = (np.mean(ranks), np.mean(hits_10))
+
 
         ranks = []
         hits_10 = []
@@ -96,7 +104,7 @@ class FreqBaseline():
             u_it, v_it, k, dt = test.all_events[b]
             assert u_it != v_it, ('loops are not permitted', u_it, v_it, k[b])
 
-            idx1 = list(self.permute_array(np.arange(N)))
+            idx1 = list(self.permute_array(np.arange(N)))   #그냥 랜덤한 노드들
             if u_it in idx1:
                 idx1.remove(u_it)
 
@@ -108,8 +116,12 @@ class FreqBaseline():
             ranks.append(rank)
             hits_10.append(hits)
 
-        print('Random: Frequency MAR and HITS@10:', np.mean(ranks), np.std(ranks), np.mean(hits_10), np.std(hits_10))
+        print(f'[3][Frequency-Random] MAR and HITS@10: '
+              f'{np.mean(ranks):.3f}+-{np.std(ranks):.3f},'
+              f' {np.mean(hits_10):.3f}+-{np.std(hits_10):.3f}')
         self.results['random'] = (np.mean(ranks), np.mean(hits_10))
+
+
 
         for rel_ind, rel in enumerate(keys):
             A = A_all[:, :, rel_ind]
@@ -119,17 +131,17 @@ class FreqBaseline():
                 u_it, v_it, k, dt = test.all_events[b]
                 assert u_it != v_it, ('loops are not permitted', u_it, v_it, k[b])
 
-                idx1 = list(np.where(A[u_it] == 1)[0])
+                idx1 = list(np.where(A[u_it] == 1)[0])  #u와 연결되어 있는 노드들
                 if u_it in idx1:
                     idx1.remove(u_it)
 
-                idx2 = list(np.where(A[v_it] == 1)[0])
+                idx2 = list(np.where(A[v_it] == 1)[0])  #v와 연결되어 있는 노드들
                 if v_it in idx2:
                     idx2.remove(v_it)
 
-                if len(idx1) > 0:
+                if len(idx1) > 0:       #연결된 노드가 하나라도 있으면
                     idx1 = np.array(idx1)
-                    idx1 = list(idx1[np.argsort(H_train[u_it, idx1])[::-1]])
+                    idx1 = list(idx1[np.argsort(H_train[u_it, idx1])[::-1]])    #u와 그 이웃(idx1)들 중에서 많이 comm했던 노드들
                 if len(idx2) > 0:
                     idx2 = np.array(idx2)
                     idx2 = list(idx2[np.argsort(H_train[v_it, idx2])[::-1]])
@@ -145,7 +157,9 @@ class FreqBaseline():
                 rank, hits = self.get_mar_hits_sym(idx1, idx2, v_it, u_it)
                 ranks.append(rank)
                 hits_10.append(hits)
-            print('%s: Frequency overlap MAR and HITS@10:' % rel, np.mean(ranks), np.std(ranks), np.mean(hits_10), np.std(hits_10))
+            print(f'[4.{rel_ind}][Frequency overlap-{rel}] MAR and HITS@10: '
+                  f'{np.mean(ranks):.3f}+-{np.std(ranks):.3f},'
+                  f'{np.mean(hits_10):.3f}+-{np.std(hits_10):.3f}')
             self.results['%s_overlap' % rel] = (np.mean(ranks), np.mean(hits_10))
 
         print('\n')
